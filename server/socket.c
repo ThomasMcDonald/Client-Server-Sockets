@@ -19,26 +19,129 @@
 extern int errno;
 const int port = 8080;
 
-int process_request(char *buffer, int sd);
+int process_request(int socket){
+    char buf[1024];
+    char * temp;
+    char cmd[200];
+    char args[5][200];
+    int argc;
+    int n, i;
+    struct utsname OS;
+
+    bzero((void *)buf, sizeof(buf));
+    bzero((void *)cmd, sizeof(cmd));
+    bzero((void *)&args, 5*sizeof(char));
+    n = recv(socket, buf, sizeof(buf), 0);
+    buf[n] = 0x00;
+    if (n <= 0)
+    {
+        printf("\tError receiving input from client or connection was forcefully closed!\n");
+    }
+    puts(buf);
+    // Split the input from the client into command and arguments
+    if ((temp = strtok(buf, " ")) != NULL)
+        strcpy(cmd, temp);
+
+    temp = strtok(NULL, " "); i = 0;
+    while (temp != NULL && i < 5)
+    {
+        strcpy(args[i], temp); i++; argc++;
+        temp = strtok(NULL, " ");
+    }
+    if (!strcmp(cmd, "litfam"))
+    {
+        n = send(socket, "So lit Fam\n", 13, 0);
+        if (n < 0)
+            printf("\tError sending  message to client.\n");
+        else
+            printf("\tSent message to client.\n");
+
+        return 0;
+    }
+
+    else if(!strcmp(cmd, "delay"))
+    {
+        int stringvalue = atoi(args[0]);
+        sleep(stringvalue);
+        strcat(args[0],"\n");
+        n = send(socket,args[0],20,0);
+        if (n < 0)
+            printf("\tError sending  message to client.\n");
+        else
+            printf("\tDelayed Client for %d Seconds\n",stringvalue);
+
+        return 0;
+    }
+    else if(!strcmp(cmd,"sys"))
+    {
+        printf("sys\n");
+        buf[0] = 0;
+        //bzero((void *)buf, sizeof(buf));
+        n = uname(&OS);
+        if(n<0)
+        {
+            printf("Error Retrieving System Information\n");
+            n = send(socket,"Error Retrieving System Information\n",100,0);
+            if (n < 0)
+            printf("\tError sending  message to client.\n");
+             else
+            printf("\tSent Error Message to client\n");
+
+        }
+        else{
+        printf("sys2\n");
+        strcpy(buf,"\n\tOS: ");
+        strcat(buf,OS.sysname);
+        strcat(buf,"\n\tVersion: ");
+        strcat(buf,OS.version);
+        strcat(buf,"\n\tCPU: ");
+        strcat(buf,OS.machine);
+        strcat(buf,"\n");
+
+        printf("Buf = %s %d\n", buf, strlen(buf));
+
+        n = send(socket,buf,strlen(buf),0);
+        if (n < 0)
+            printf("\tError sending  message to client.\n");
+             else
+            printf("\tSent Error Message to client\n");
+    }
+
+    }
+    else if(!strcmp(cmd, "ls"))
+    {
+        if (!strcmp(args[0], "-l")){
+            strcat(args[0]," Long listed fam\n");
+            
+            n = send(socket,args[0],20,0);
+            if (n < 0)
+                printf("\tError sending  message to client.\n");
+            else
+                printf("\tLong Listed Fam\n");
+        }
+        return 0;
+    }
+    else{
+        n = send(socket,"Unknown command\n",16,0);
+        if (n < 0)
+            printf("\tError sending message to client.\n");
+        else
+            printf("\tUnknown command recieved\n");
+
+        return 0;
+    }
+    return 0;
+}
 
 int make_server_socket()
 {
 
     struct sockaddr_in saddr;
-    int  addrlen , new_socket , client_socket[30] , max_clients = 30 , activity, valread , sd;
-    int clientCounter;
-    int max_sd;
-    int n;
-    int flags;
-    char buffer[1025];
-    fd_set readfds;
+
 
 
     printf("Initialising sd...\n");
     printf("\tCreating the sd...\n");
-
-
-
 
 
     int sock_id = socket(AF_INET, SOCK_STREAM, 0);
@@ -59,11 +162,11 @@ int make_server_socket()
     if (bind(sock_id, (struct sockaddr *)&saddr, sizeof(saddr)) != 0)
     {
         perror("bind failed. Error");
-        return -1;
+        exit(0);
     }
 
 
-    printf("\t\tSuccess.\n");
+
     printf("\tStarting Listener...\n");
 
     if (listen(sock_id, 5) != 0)
@@ -71,177 +174,10 @@ int make_server_socket()
         printf("\t\tFailed to start listener.\n");
         return -1;
     }
+    printf("\t\tSuccess.\n");
 
-    for (int i = 0; i < max_clients; i++) 
-    {
-        client_socket[i] = 0;
-    }
-
-    addrlen = sizeof(saddr);
     puts("Waiting for connections ...");
-    while(1) 
-    {
-                    //clear the sd set
-        FD_ZERO(&readfds);
-
-                    //add sock sd to set
-        FD_SET(sock_id, &readfds);
-        max_sd = sock_id;
-
-                    //add child sockets to set
-        for (int i = 0 ; i < max_clients ; i++) 
-        {
-                        //sd descriptor
-            sd = client_socket[i];
-
-                        //if valid sd descriptor then add to read list
-            if(sd > 0)
-                FD_SET( sd , &readfds);
-
-                        //highest file descriptor number, need it for the select function
-            if(sd > max_sd)
-                max_sd = sd;
-        }
-
-                    //wait for an activity on one of the sockets , timeout is NULL , so wait indefinitely
-        activity = select(max_sd + 1 , &readfds , NULL , NULL , NULL);
-
-        if ((activity < 0) && (errno!=EINTR)) 
-        {
-            printf("select error");
-        }
-
-                    //If something happened on the  sock , then its an incoming connection
-        if (FD_ISSET(sock_id, &readfds)) 
-        {
-            if ((new_socket = accept(sock_id, (struct sockaddr *)&saddr, (socklen_t*)&addrlen))<0)
-            {
-                perror("accept");
-                exit(EXIT_FAILURE);
-            }
-            clientCounter++;
-            printf("New Connection , Socket File Descriptor is %d , IP is : %s , Port : %d \n" , new_socket , inet_ntoa(saddr.sin_addr) , ntohs(saddr.sin_port));
-            flags = fcntl(new_socket,F_GETFL,0);
-            fcntl(new_socket, F_SETFL, flags | O_NONBLOCK);
-
-            if ((send(new_socket, "Connected With Server\n", 10, 0)) < 0)
-                printf("\tError sending initial command request.\n");
-
-                       // puts("Welcome message sent successfully");
-
-                        //add new sd to array of sockets
-            for (int i = 0; i < max_clients; i++) 
-            {
-                            //if position is empty
-                if( client_socket[i] == 0 )
-                {
-                    client_socket[i] = new_socket;
-                                //printf("Adding to list of sockets as %d\n" , i);
-                    break;
-                }
-            }
-        }
-
-
-                    //else its some IO operation on some other sd :)
-        for (int i = 0; i < max_clients; i++) 
-        {
-            bzero((void *)&buffer, sizeof(buffer));
-            sd = client_socket[i];
-
-            if (FD_ISSET(sd , &readfds)) 
-            {
-                  //Check if it was for closing , and also read the incoming message
-                    valread = read( sd , buffer, 1024);
-                    if (valread == 0)
-                    {
-                                //Somebody disconnected , get his details and print
-                        getpeername(sd , (struct sockaddr*)&saddr , (socklen_t*)&addrlen);
-                        printf("Host disconnected , ip %s , port %d \n" , inet_ntoa(saddr.sin_addr) , ntohs(saddr.sin_port));
-                        clientCounter--;
-                                //Close the sd and mark as 0 in list for reuse
-                        close(sd);
-                        client_socket[i] = 0;
-                        
-                    }//
-                    else
-                    {
-                        pid_t pid;
-
-                        if ((pid = fork()) <0)
-                        {
-                            perror("fuck");
-                        }
-                        else if (pid == 0)
-                        {
-                            printf("Child %d has performed the following tasks:\n ",getpid());
-                        if (!strcmp(buffer, "time"))
-                        {
-                            time_t t;
-                            time(&t);
-
-                            bzero((void *)&buffer, sizeof(buffer));
-                            strcpy(buffer, "The time is: ");
-                            strcat(buffer, ctime(&t));
-
-                            int n = send(sd, buffer, strlen(buffer), 0);
-                            if (n < 0)
-                                printf("\tError sending time to client\n");
-                            else
-                                printf("\t%s%d\n","Sent time to client ",client_socket[i]);
-                            exit(0);
-                         
-                        }
-                        else if (!strcmp(buffer, "quit"))
-                        {
-
-                            getpeername(sd , (struct sockaddr*)&saddr , (socklen_t*)&addrlen);
-                            //printf("Host disconnected , ip %s , port %d \n" , inet_ntoa(saddr.sin_addr) , ntohs(saddr.sin_port));
-                            clientCounter--;
-
-                            bzero((void *)&buffer, sizeof(buffer));
-                            strcpy(buffer, "Disconnected");
-                            int n = send(sd, buffer, strlen(buffer), 0);        //Close the sd and mark as 0 in list for reuse
-                            close(sd);
-                            client_socket[i] = 0;
-                            exit(0);
-                           
-                        }
-                        else if (!strcmp(buffer, "count"))
-                        {
-                            bzero((void *)&buffer, sizeof(buffer));
-                            strcpy(buffer, "Connected Clients: ");
-                            strcat(buffer, "12");
-                            int n = send(sd, buffer, strlen(buffer), 0);  
-                            if (n < 0)
-                                printf("\tError sending count to client\n");
-                            else
-                                printf("\t%s%d\n","Sent Client Count to client ",client_socket[i]);
-                            exit(0);
-                        }   
-                        else
-                        {
-
-                            n = send(sd, "Error: Unknown Command\n", 24, 0);
-                            if (n < 0)
-                            {
-                                printf("Error sending unknown command notification.\n");
-                            }
-                            printf("\tReceived an unknown command.\n");
-                            exit(0);
-                        }
-                        }
-                        else
-                        {
-                            int childexitstat;
-                            if ((waitpid(pid, &childexitstat, 0)) < 0) perror("wait error");
-                            printf("\t%s%s%d\n","Commited Sudoku ",WIFEXITED(childexitstat) ? "Normally " : "Abnornally ", WEXITSTATUS(childexitstat));
-                        }
-                    }
-            }
-        }
-    }
-    return 0;
+    return sock_id;
 }
 
 
