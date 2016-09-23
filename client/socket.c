@@ -7,14 +7,13 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
-#include <time.h>
+#include <sys/time.h>
 #include <sys/utsname.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 
-
-
-   
+//
 
 
 
@@ -25,12 +24,7 @@ int connect_server(char * address, char * port)
 	struct sockaddr_in saddr; //‐ the number to call
 	struct hostent *hp; //‐ used to get number
 	int n;
-	int  addrlen;
-
-
-	time_t start_t, end_t;
- 	double diff_t;
-
+	struct timeval t1, t2;
 	//‐‐ Step 1: Get a socket –
 	printf("Initialising socket...\n");
 	printf("\tCreating the socket...\n");
@@ -56,105 +50,252 @@ int connect_server(char * address, char * port)
 	saddr.sin_family = AF_INET;
 
 	printf("\tReady...\n");
+
 	// Set up file descriptor set
-	fd_set master;
-	int maxfd;
 
-	FD_ZERO(&master);
-	FD_SET(STDIN_FILENO, &master);
-	maxfd = STDIN_FILENO;
+	int opt = 1;  
+    int master_socket, addrlen, new_socket, client_socket[30], max_clients = 30, activity, i, valread, sd;  
+    int max_sd;   
+        
+    char buffer[1000];  //data buffer of 1K 
+        
+    //set of socket descriptors 
+    fd_set master, readfds;    
 
+    //clear the socket set 
+    FD_ZERO(&master);  
+    
+        //add master socket to set 
+    FD_SET(STDIN_FILENO, &master);  
+    max_sd = STDIN_FILENO;
+    client_socket[0] = max_sd;  
+
+    printf("Added STDIN_FILENO to FD SET as %d\n", max_sd);
+        
 	fflush(stdout);
+	int currentfds = 1;
 
-addrlen = sizeof(saddr);
-	while(1)
-	{
-		fd_set readfds = master;
-		char buf[100];
-		int n, i;
+	for (int j = 1; j < max_clients; j++)
+		client_socket[j] = 0;
 
-		int activity = select(maxfd + 1, &readfds, NULL, NULL, NULL);
-		if(activity < 0)
-			continue;
+	while(1)  
+	{  
+        //wait for an activity on one of the sockets , timeout is NULL , 
+        //so wait indefinitely 
+		readfds = master;
+		//printf("Max_sd before select = %d\n", max_sd);
+		
+		activity = select(max_sd + 1, &readfds, NULL, NULL, NULL);  
 
-		for (int i = 0; i <= maxfd; i++)
-		{
-			if (FD_ISSET(i, &readfds))
+		if (activity < 0)  
+		{  
+			printf("select error");
+			exit(4);  
+		}  
+
+		for (i = 0; i < sizeof(master); i++)  
+		{  
+			sd = client_socket[i]; 
+
+			if (FD_ISSET(sd, &readfds))
 			{
-				if (i == STDIN_FILENO)
+				if (sd == STDIN_FILENO)
 				{
-					// Read in user input and write to the server
-					buf[0]= 0x00;
-					//bzero((void *)buf, sizeof(buf));
-					//scanf("%100[^\n]%*c", buf);
-					fgets(buf, 1000, stdin);
-					buf[strlen(buf)-1]= 0x00;
 
-					if(!strcmp(buf, "quit"))
+					// Read in user input and write to the server
+					buffer[0]=0x00;
+					scanf("%256[^\n]%*c", buffer);
+
+					if(!strcmp(buffer, "quit"))
 					{
-						getpeername(i , (struct sockaddr*)&saddr , (socklen_t*)&addrlen);
-                        printf("Disconnected From Assigned:, ip %s , port %d \n" , inet_ntoa(saddr.sin_addr) , ntohs(saddr.sin_port));
 						exit(0);
 					}
 
 					// Make connection to the server
 					int sock = socket(AF_INET, SOCK_STREAM, 0);
-					if(sock == -1) return -1;
+					if(sock == -1)
+					{
+						perror("Error creating socket...\n");
+						exit(1);
+					}
+
 					if (connect(sock, (struct sockaddr *) &saddr, sizeof(saddr)) != 0)
 					{
-						printf("Failed to connect.\n");
+						printf("Failed to connect to server...\n");
+						exit(1);
+					}
+
+					n = send(sock, buffer, strlen(buffer), 0);
+					gettimeofday(&t1, NULL);
+					if (n < 0)
+					{
+						perror("Send Failed...");
 						break;
 					}
-					time(&start_t);
-					send(sock, buf, strlen(buf), 0);
+					
+
 
 					FD_SET(sock, &master);
-					if (sock > maxfd) maxfd = sock;
-
-					printf("> ");
+					currentfds++;
+					for (int z = i; z < max_clients; z++)  
+					{  
+                		//if position is empty 
+						if( client_socket[z] == 0 )  
+						{  
+							client_socket[z] = sock;  
+							printf("Adding to list of sockets as %d\n" , client_socket[z]);
+							if (sock > max_sd)
+								max_sd = sock;  
+							break;  
+						}  
+					}
 					fflush(stdout);
+					break;
 				}
 				else
 				{
-					// Clear the line we will print on
+
+				    char * temp;
+				    char cmd[200];
+				    char args[5][200];
+				    int argc;
+				    int n, i;
+
+				    bzero((void *)cmd, sizeof(cmd));
+				    bzero((void *)args, 5*sizeof(char));
+
+				    if ((temp = strtok(buffer, " ")) != NULL)
+				        strcpy(cmd, temp);
+
+				    temp = strtok(NULL, " "); i = 0;
+				    while (temp != NULL && i < 5)
+				    {
+				        strcpy(args[i], temp); i++; argc++;
+				        temp = strtok(NULL, " ");
+					}
 					printf("\33[2K\r");
 
-					// Read response from the server
-					buf[0] = 0;
-					//bzero((void *)&buf, sizeof(buf));
-					n = recv(i, buf, sizeof(buf), 0);
-					buf[n] = 0x00;
+
+					bzero((void *)buffer, sizeof(buffer));
+					n = recv(sd, buffer, sizeof(buffer), 0);
+					buffer[n] = 0;
 					if (n <= 0)
 					{
-						printf("Nothing...\n");
-						time(&end_t);
-						diff_t = difftime(end_t, start_t);
-   						printf("Time  Taken = %f\n", diff_t);
+						printf("Nothing received from server...\n");
 					}
+					else if (!strcmp(buffer, "check")){
+
+						char  *filename = args[0];
+						char line[256];
+					 	int one;
+					 	int two;
+					 	send(sd,"Accepted",10,0);
+					 	printf("\tUploading file: %s\n", filename);
+							FILE * input = fopen(filename,"r");if (input == NULL)perror("File didnt open\n");
+							while(fgets(line, sizeof(line), input) != NULL)
+								{
+								one = send(sd,line, strlen(line),0);if(one <0)perror("Didnt work send\n");
+								two = recv(sd, buffer, strlen(buffer), 0);if(two<0)perror("Recv no work\n");
+								bzero((void *)buffer, sizeof(buffer));
+								}
+								bzero((void *)buffer, sizeof(buffer));
+								printf("\tFinished Uploading.\n");
+								fclose(input);
+					}  
+					else if (!strcmp(buffer, "getCheck")){
+						int exists; 
+						int force;
+						char *filepath = NULL;
+						char *newfile = NULL;
+						if(!strcmp(args[1],"-f"))
+				        {
+				            filepath = args[0];
+				            if (argc > 3)
+				                newfile = args[2];
+				            force = 1;
+				        }
+				        else{
+				            filepath = args[0];
+				            if (argc < 2)
+				                newfile = NULL;
+				            force = 0;
+				        }
+
+						char fileline[256];
+						int n;
+						FILE * output;
+						printf("getChecked\n");
+						n = send(sd,"Accepted",8,0); if(n<0)printf("didnt work");
+					                printf("Accepted\n");
+					                if(newfile != NULL){
+					                output = fopen(newfile,"w"); if (output == NULL)perror("File didnt open\n");
+					            	}
+					                int a;   
+					               	 n = recv(sd,fileline,sizeof(fileline),0);
+					               	 n = send(sd, "received", 8, 0);
+					               	 //printf("Firstline = %s\n", fileline);
+					               	 int count = 0;
+					                while(n != 0)
+					                {
+
+					                	if(newfile == NULL)printf("%s",fileline);
+					                	else fwrite(fileline, sizeof(char), strlen(fileline), output);
+					                	 
+						              	bzero((void *)fileline, sizeof(fileline));
+						            	n = recv(sd, fileline, sizeof(fileline), 0); if(n<0){perror("Didnt Recieve\n");}
+						            	count++;
+						            	if(count == 40 && newfile == NULL)
+						            	{
+						            		printf("Press any key to continue\n");
+						            		count =0;
+						            		getchar();
+						            	}
+						                a = send(sd,"Recieved Line\n",14,0); if(a<0){printf("shit\n"); break;}
+						                //printf("%s\n",fileline);
+						              	
+					                }
+					                
+					                if(newfile == NULL) printf("Fin.\n");
+					                else {fclose(output); printf("Fin.\n");}
+
+					}  
+					
 					else
 					{
-						char temp[1024];
-						strcpy(temp, buf);
-
-						char * cmd = NULL;
-						cmd = strtok(temp, " ");
 						
-						printf("Response: ");
-						fprintf(stdout, buf, strlen(buf));
-						time(&end_t);
-						diff_t = difftime(end_t, start_t);
-   						printf("Time  Taken = %f\n", diff_t);
+						printf("Response: \n\t");
+						fprintf(stdout, buffer, strlen(buffer));
+				
+
+
 					}
 
-					close(i);
+					gettimeofday(&t2, NULL);
+					long elapsed = ((t2.tv_sec - t1.tv_sec)*1000000 + t2.tv_usec - t1.tv_usec) / 1000;
+					printf("Time Taken: %li\n",elapsed);
 
-					FD_CLR(i, &master);
+					close(sd);
+					FD_CLR(sd, &master);
+
+					client_socket[i] = 0; 
+					currentfds--; 
 
 					fflush(stdout);
+					break;
 				}
 			}
 		}
+	}   
+
+	return 0;
 }
-return 0;
-}
+//
+
+//
+
+
+
+
+
+
 

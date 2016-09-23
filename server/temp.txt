@@ -1,0 +1,6 @@
+main.c
+makefile
+output.txt
+server
+socket.c
+temp.txt

@@ -14,7 +14,7 @@
 
 
 
-int make_server_socket();
+int make_server_socket(char * address, char * port);
 int process_request(int socket);
 void handle_sigchld(int sig) {
   int saved_errno = errno;
@@ -24,7 +24,7 @@ void handle_sigchld(int sig) {
 
 
 
-int main(int argc, char const *argv[])
+int main(int argc, char *argv[])
 {
 	pid_t pid;
 
@@ -37,7 +37,7 @@ int main(int argc, char const *argv[])
 	printf("Starting the server...\n\n");
 
 
-	int sock = make_server_socket();
+	int sock = make_server_socket(!argv[1] ? "localhost":argv[1], !argv[2] ? "8080":argv[2]);
 
 	while(1)
 	{
